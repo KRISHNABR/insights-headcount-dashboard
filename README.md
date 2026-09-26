@@ -44,7 +44,7 @@ done
 cd insights-platform && ./dev up          # add --port 9100 if 8080 is taken
 
 # 3 · sign in. Appending ?as= is the entire local login
-open "http://localhost:8080/a/headcount-dashboard/?as=dana@corp.example"
+open "http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example"
 ```
 
 Needs Python 3.12 and [uv](https://docs.astral.sh/uv/). No Docker, no cloud account.
@@ -62,7 +62,7 @@ uv run insights build --show # the exact container image the platform will build
 
 | User | Groups | What you'll see |
 |---|---|---|
-| `dana@corp.example` | `MG-PEOPLE-OPS`, `headcount-viewer` | Everything — she holds the role |
+| `krishna@corp.example` | `MG-PEOPLE-OPS`, `headcount-viewer` | Everything — she holds the role |
 | `sam@corp.example` | `MG-PEOPLE-ANALYTICS`, `comp-analyst` | **403.** Signed in, but not a `headcount-viewer` |
 | `priya@corp.example` | `MG-PLATFORM` | **403.** Platform team has no special access to tenant apps |
 
@@ -100,7 +100,7 @@ flowchart TB
 **Three things in that diagram are the whole design:**
 
 - **Step 2.** If the edge did not strip client headers, `curl -H "X-Auth-Groups: comp-analyst"`
-  would be a complete bypass and our app could not tell. Try it — you stay Dana.
+  would be a complete bypass and our app could not tell. Try it — you stay Krishna.
 - **No token in the browser.** The frontend is served from the same origin as the API, so the
   session cookie is attached automatically. There is no access token in `localStorage` for an
   XSS bug to steal, because there is no access token at all.
@@ -163,7 +163,7 @@ Everything on the left is a fake. **Nothing in `src/` changes between them.**
 flowchart LR
   subgraph L["LOCAL — what runs on your laptop"]
     direction TB
-    L1["?as=dana@corp.example<br/><i>a cookie. That is the whole login</i>"]
+    L1["?as=krishna@corp.example<br/><i>a cookie. That is the whole login</i>"]
     L2["platform edge<br/><i>strips + injects headers</i>"]
     L3["this app<br/><i>uvicorn</i>"]
     L4["SDK broker"]
@@ -209,10 +209,10 @@ The distinction that matters most, because it decides what Unity Catalog sees:
 ```mermaid
 flowchart TB
   subgraph U["U2M — a person is present (this app)"]
-    UA["Dana signs in to Entra"] --> UB["her session"]
+    UA["Krishna signs in to Entra"] --> UB["her session"]
     UB --> UC1["OAuth token exchange<br/><i>Databricks federates to the same Entra</i>"]
-    UC1 --> UD["a short-lived token <b>for Dana</b>"]
-    UD --> UE["Unity Catalog sees dana@corp.example<br/><b>applies HER grants and column masks</b>"]
+    UC1 --> UD["a short-lived token <b>for Krishna</b>"]
+    UD --> UE["Unity Catalog sees krishna@corp.example<br/><b>applies HER grants and column masks</b>"]
   end
 
   subgraph M["M2M — nobody is present (the comp-report job)"]
