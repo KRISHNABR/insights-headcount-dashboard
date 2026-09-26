@@ -1,0 +1,20 @@
+# The tenant's entire declaration to the platform.
+apiVersion: v1
+app: headcount-dashboard
+team: people-ops
+kind: web                       # web | job
+
+owners:
+  - MG-PEOPLE-OPS               # corporate group; becomes <app>-admin
+
+runtime:
+  sdk: ">=0.1,<1"               # a FLOOR, not a pin - patches/minors flow automatically
+
+data:
+  - dataset: hr.headcount       # catalog alias. NOT a connection string.
+    access: read
+  - dataset: directory.people   # a different shared connection (the internal REST API),
+    access: read                # declared the same way. The tenant never learns which.
+
+access:
+  roles: [headcount-viewer]     # who may use the app, beyond platform membership
