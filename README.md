@@ -26,7 +26,7 @@ about this repo is how little is in it.**
 | The container image | |
 | Four CI/CD pipelines across three environments | |
 
-There is **no Dockerfile, no pipeline code, no auth code and no connection string** in this
+There is **no pipeline code, no auth code and no connection string** in this
 repository. That is the platform's value proposition, stated as a file listing.
 
 ---
