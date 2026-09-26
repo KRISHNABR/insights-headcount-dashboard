@@ -41,7 +41,7 @@ for r in insights-platform insights-sdk insights-headcount-dashboard insights-co
 done
 
 # 2 · start the whole platform
-cd insights-platform && ./dev up          # add --port 9100 if 8080 is taken
+cd insights-platform && uv run insights up          # add --port 9100 if 8080 is taken
 
 # 3 · sign in. Appending ?as= is the entire local login
 open "http://localhost:8080/a/headcount-dashboard/?as=krishna@corp.example"
