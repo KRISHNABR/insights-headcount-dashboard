@@ -63,8 +63,8 @@ uv run insights build --show # the exact container image the platform will build
 | User | Groups | What you'll see |
 |---|---|---|
 | `krishna@corp.example` | `MG-PEOPLE-OPS`, `headcount-viewer` | Everything — she holds the role |
-| `sam@corp.example` | `MG-PEOPLE-ANALYTICS`, `comp-analyst` | **403.** Signed in, but not a `headcount-viewer` |
-| `priya@corp.example` | `MG-PLATFORM` | **403.** Platform team has no special access to tenant apps |
+| `vidya@corp.example` | `MG-PEOPLE-ANALYTICS`, `comp-analyst` | **403.** Signed in, but not a `headcount-viewer` |
+| `suraj@corp.example` | `MG-PLATFORM` | **403.** Platform team has no special access to tenant apps |
 
 That middle row is the useful one: authentication and authorization are different questions.
 
@@ -209,10 +209,10 @@ The distinction that matters most, because it decides what Unity Catalog sees:
 ```mermaid
 flowchart TB
   subgraph U["U2M — a person is present (this app)"]
-    UA["Krishna signs in to Entra"] --> UB["her session"]
+    UA["Krishna signs in to Entra"] --> UB["their session"]
     UB --> UC1["OAuth token exchange<br/><i>Databricks federates to the same Entra</i>"]
     UC1 --> UD["a short-lived token <b>for Krishna</b>"]
-    UD --> UE["Unity Catalog sees krishna@corp.example<br/><b>applies HER grants and column masks</b>"]
+    UD --> UE["Unity Catalog sees krishna@corp.example<br/><b>applies THEIR grants and column masks</b>"]
   end
 
   subgraph M["M2M — nobody is present (the comp-report job)"]
