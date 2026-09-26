@@ -19,7 +19,6 @@ kind: web                        # web | job
 # ACCESS - two different questions, deliberately kept apart.
 #
 #   manage:  who can change, deploy and govern THIS APP        (control plane)
-#   roles:   who can use the RUNNING APP and see what          (data plane)
 #
 # Mixing these is the most common way internal platforms leak. Being able to
 # deploy an app is not the same as being allowed to read what it reads.
@@ -46,32 +45,36 @@ access:
   # Roles the app itself checks at runtime with require_role("headcount-viewer").
   # The platform reconciles each role to a corporate group at deploy time, so
   # nobody hand-creates groups and nobody hand-checks membership.
-  roles:
-    - name: headcount-viewer
-      description: View headcount by department.
-      groups:
-        - MG-PEOPLE-OPS
-        - MG-FINANCE-BI
-
 # -----------------------------------------------------------------------------
 # RUNTIME - what this runs on. You pick from what the platform publishes;
 # you do not build an image.
 # -----------------------------------------------------------------------------
 runtime:
-  sdk: ">=0.1,<1"                # a FLOOR, not a pin. Patches and minors reach
                                  # you automatically. `==` is rejected.
-  base: python-web               # see `insights runtimes`. The platform patches these.
   size: small                    # small | medium | large -> cpu/memory/replicas
 
 # -----------------------------------------------------------------------------
 # DATA - logical dataset names. Never a table, never a connection, never a
 # credential. Run `insights datasets` to see what you can ask for.
 # -----------------------------------------------------------------------------
-data:
-  - dataset: hr.headcount
-    access: read
-  - dataset: directory.people    # a different shared connection (the internal
-    access: read                 # REST API). Declared identically - you are not
+# -----------------------------------------------------------------------------
+# CONNECTIONS - the systems this app talks to. Two different engines, on purpose:
+# a warehouse and an internal REST API. The call site is the same shape for both.
+#
+# `secret` is a NAME. Values live in the secret store under insights/<app>/, which
+# our team writes and the platform team cannot read. A credential typed here would
+# be in git history forever, so the manifest loader refuses one.
+# -----------------------------------------------------------------------------
+connections:
+  - name: hr-warehouse
+    engine: sqlite               # databricks-sql in dev and prod
+    path: ../insights-platform/runtime/fakes/warehouse/warehouse.db
+
+  - name: people-directory
+    engine: rest
+    base_url: ${INSIGHTS_DIRECTORY_URL}
+    secret: directory-api-token
+    timeout: 10
                                  # told, and do not need to know, which is which.
 
 # -----------------------------------------------------------------------------
@@ -80,7 +83,7 @@ data:
 web:
   route: /headcount-dashboard    # where the edge publishes you
 
-  type: spa                      # dashboard | api | spa | streamlit
+  type: spa                      # api | spa
                                  #
                                  #   api        FastAPI, JSON only. No UI.
                                  #   spa        FastAPI backend + YOUR frontend in static/.
@@ -94,7 +97,7 @@ web:
                                  # code and the health contract. It does NOT change how you
                                  # reach data - query() is identical in all of them.
 
-  health: /healthz               # generated. Resolves every dataset above and
+  health: /healthz               # generated. Checks every connection above and
                                  # checks its credential was injected.
 
 # -----------------------------------------------------------------------------

@@ -4,11 +4,14 @@
 serves both from the same origin, which is what lets the browser hold nothing but a
 session cookie it cannot read.
 
-What is NOT in this file: login, session handling, a connection, a credential, a
-table name, logging setup, a health endpoint, a Dockerfile, or a pipeline.
+Two connections, two engines, one call shape: a warehouse and an internal REST API.
+Both are declared in app.yaml; neither credential appears anywhere in this repo.
+
+What is NOT in this file: login, session handling, a credential, a host, logging
+setup, a health endpoint, or a pipeline.
 """
 
-from insights_sdk import current_user, fetch, get_logger, query, require_role, web_app
+from insights_sdk import connect, current_user, get_logger, require_role, web_app
 
 app = web_app()          # login, identity, structured logs, metrics and /healthz
 log = get_logger()
@@ -16,17 +19,17 @@ log = get_logger()
 
 @app.get("/api/headcount")
 def headcount(month: str = "2026-09"):
-    """Read the warehouse.
+    """Read our warehouse.
 
-    `hr.headcount` is a dataset name, not a table. The platform resolves it to
-    whichever physical table this environment uses, so this exact query runs in
-    dev, uat and prod with no environment handling.
+    The connection is declared in app.yaml, so the host differs per environment and
+    this line does not. We already have access to this data - the platform ships the
+    connector and holds the credential slot; it does not broker the read and never
+    sees a row.
     """
-    require_role("headcount-viewer")          # 403 if they aren't in the group
+    require_role("reader")                    # 403 unless they are listed in app.yaml
 
-    rows = query(
-        "hr.headcount",
-        "SELECT dept, headcount FROM hr.headcount WHERE month = :month ORDER BY dept",
+    rows = connect("hr-warehouse").query(
+        "SELECT dept, headcount FROM hr_headcount WHERE month = :month ORDER BY dept",
         month=month,
     )
 
@@ -38,13 +41,14 @@ def headcount(month: str = "2026-09"):
 
 @app.get("/api/team")
 def team(dept: str = "Engineering"):
-    """The same pattern against a completely different shared connection.
+    """The same pattern against a completely different engine.
 
-    `directory.people` is an internal REST API rather than the warehouse. The only
-    thing that changes in this code is the verb.
+    `people-directory` is an internal REST API rather than a warehouse, and it needs
+    a bearer token where the warehouse needed none. Neither difference shows up here:
+    the connector resolves the credential, and `query` takes a path instead of SQL.
     """
-    require_role("headcount-viewer")
-    people = fetch("directory.people", params={"dept": dept})
+    require_role("reader")
+    people = connect("people-directory").query("/people", dept=dept)
     log.info("directory_viewed", dept=dept, rows=len(people))
     return {"dept": dept, "people": people}
 
