@@ -1,13 +1,10 @@
 # =============================================================================
-# app.yaml - everything the platform needs to know about this app.
+# headcount-dashboard — an interactive web app.
 #
-# You declare WHAT you need. The platform decides HOW: which image, which
-# credential, which table, which cron, which IAM role, which corporate group.
-# That is why there is no connection string, no Dockerfile and no pipeline in
-# this repository - and why the loader rejects one if you add it.
+# This file is the ONLY configuration this app has. Everything in it is a
+# DECLARATION: what we need and who owns it, never mechanism.
 #
-# Every line below turns into something real at deploy time. The mapping is in
-# docs/ARCHITECTURE.md, "What each line of app.yaml becomes".
+# Full schema reference: docs/APP-YAML.md in the platform repo.
 # =============================================================================
 
 apiVersion: v1
@@ -16,102 +13,63 @@ team: people-ops
 kind: web                        # web | job
 
 # -----------------------------------------------------------------------------
-# ACCESS - two different questions, deliberately kept apart.
+# ACCESS — three tiers, and there is no fourth. They NEST: an owner satisfies
+# every check a contributor does, and a contributor every check a reader does.
 #
-#   manage:  who can change, deploy and govern THIS APP        (control plane)
-#
-# Mixing these is the most common way internal platforms leak. Being able to
-# deploy an app is not the same as being allowed to read what it reads.
+# Corporate groups, never individuals — individuals leave. The union of these is
+# what the edge uses to decide who may reach the app at all; `require_role()`
+# checks them again inside the code.
 # -----------------------------------------------------------------------------
 access:
-
   manage:
-    # Full control. Approves production deploys, requests data access, adds
-    # people, deletes the app. Must be a corporate group, never an individual -
-    # individuals leave.
-    owners:
-      - MG-PEOPLE-OPS
+    owners:       [MG-PEOPLE-OPS]        # approve prod · change access · answer for it
+    contributors: [MG-PEOPLE-OPS-ENG]    # deploy dev and uat · read logs · NOT prod
+    readers:      [MG-FINANCE-BI]        # use the app and see its telemetry, nothing more
 
-    # Day-to-day engineering. Can deploy to dev and uat, read logs and
-    # telemetry, open PRs. CANNOT deploy to prod and CANNOT request data access.
-    contributors:
-      - MG-PEOPLE-OPS-ENG
-
-    # Can see that the app exists, its health and its telemetry. No deploys,
-    # no data. Usually a neighbouring team or an internal auditor.
-    readers:
-      - MG-FINANCE-BI
-
-  # Roles the app itself checks at runtime with require_role("headcount-viewer").
-  # The platform reconciles each role to a corporate group at deploy time, so
-  # nobody hand-creates groups and nobody hand-checks membership.
-# -----------------------------------------------------------------------------
-# RUNTIME - what this runs on. You pick from what the platform publishes;
-# you do not build an image.
-# -----------------------------------------------------------------------------
 runtime:
-                                 # you automatically. `==` is rejected.
-  size: small                    # small | medium | large -> cpu/memory/replicas
+  size: small                    # small | medium | large -> cpu / memory / replicas
 
 # -----------------------------------------------------------------------------
-# DATA - logical dataset names. Never a table, never a connection, never a
-# credential. Run `insights datasets` to see what you can ask for.
-# -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# CONNECTIONS - the systems this app talks to. Two different engines, on purpose:
-# a warehouse and an internal REST API. The call site is the same shape for both.
+# CONNECTIONS — two systems, two engines, one call shape.
 #
-# `secret` is a NAME. Values live in the secret store under insights/<app>/, which
-# our team writes and the platform team cannot read. A credential typed here would
-# be in git history forever, so the manifest loader refuses one.
+# Each block describes PRODUCTION; `local:` is the stand-in for a laptop, applied
+# only when INSIGHTS_ENV=local. Fields named under `local:` override; the rest is
+# inherited.
 # -----------------------------------------------------------------------------
 connections:
-  - name: hr-warehouse
-    engine: sqlite               # databricks-sql in dev and prod
-    path: ../insights-platform/runtime/fakes/warehouse/warehouse.db
 
+  # A warehouse, reached over SQL.
+  - name: hr-warehouse
+    engine: databricks-sql
+    host: ${HR_WAREHOUSE_HOST}
+    http_path: ${HR_WAREHOUSE_HTTP_PATH}
+    local:
+      engine: sqlite
+      path: ${INSIGHTS_WAREHOUSE_PATH}
+
+  # An internal REST API. `query()` takes a PATH instead of SQL; the connector
+  # attaches the bearer token. `secret:` is a NAME — the value is in the secret
+  # store, which our team writes and the platform team cannot read.
   - name: people-directory
     engine: rest
     base_url: ${INSIGHTS_DIRECTORY_URL}
     secret: directory-api-token
     timeout: 10
-                                 # told, and do not need to know, which is which.
 
 # -----------------------------------------------------------------------------
-# WEB - only for kind: web.
+# WEB — only for kind: web.
+#
+#   route   where the edge publishes this app. Everything under it is proxied
+#           to us, with identity already established and verified.
+#   type    api  JSON only, no frontend
+#           spa  our own built bundle in static/, served from the SAME origin as
+#                the API — which is what lets the browser hold nothing but a
+#                session cookie it cannot read. We serve it; we do not build it.
+#   health  generated by the SDK. Opens every connection above and confirms the
+#           credential arrived, so a deploy that starts fine and fails on first
+#           use is caught here rather than by a user.
 # -----------------------------------------------------------------------------
 web:
-  route: /headcount-dashboard    # where the edge publishes you
-
+  route: /headcount-dashboard
   type: spa                      # api | spa
-                                 #
-                                 #   api        FastAPI, JSON only. No UI.
-                                 #   spa        FastAPI backend + YOUR frontend in static/.
-                                 #              We serve it from the same origin; we do not
-                                 #              build it. No Node in the runtime image.
-                                 #   streamlit  You write one app.py. The platform supplies
-                                 #              the identity shim, a health sidecar and
-                                 #              sticky sessions.
-                                 #
-                                 # `type` picks the base image, how identity reaches your
-                                 # code and the health contract. It does NOT change how you
-                                 # reach data - query() is identical in all of them.
-
-  health: /healthz               # generated. Checks every connection above and
-                                 # checks its credential was injected.
-
-# -----------------------------------------------------------------------------
-# ENVIRONMENTS - which environments exist and who lets a release into them.
-# The approver lists point at the groups in access.manage above, so promotion
-# rights and app ownership cannot drift apart.
-# -----------------------------------------------------------------------------
-environments:
-  dev:
-    auto_deploy: true            # every merge to main
-  uat:
-    auto_deploy: false
-    approvers: contributors
-  prod:
-    auto_deploy: false
-    approvers: owners            # only MG-PEOPLE-OPS can release to production
-    change_window: business-hours
+  health: /healthz
