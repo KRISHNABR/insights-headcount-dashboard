@@ -22,7 +22,7 @@ about this repo is how little is in it.**
 | Permission checks (`require_role`) | |
 | Data access — no connection, no credential, no table name | |
 | Structured logs, metrics, audit records | |
-| `/healthz`, which resolves every dataset we declared | |
+| `/healthz`, which opens every connection we declared | |
 | The container image | |
 | Four CI/CD pipelines across three environments | |
 
@@ -54,7 +54,7 @@ Needs Python 3.12 and [uv](https://docs.astral.sh/uv/). No Docker, no cloud acco
 ```bash
 uv sync                      # install
 uv run insights doctor       # everything CI will check, checked locally — same code path
-uv run insights datasets     # what data we can read, and what we could request
+uv run insights connections  # what we talk to, and whether we can
 uv run insights build --show # the exact container image the platform will build for us
 ```
 
@@ -76,156 +76,78 @@ That middle row is the useful one: authentication and authorization are differen
 flowchart TB
   B["browser<br/><i>static/index.html</i>"] -->|"fetch('/api/headcount')<br/>same origin, cookie rides along<br/><b>no token in the browser</b>"| E
 
-  subgraph E["platform edge"]
-    E1["1 · resolve the session"]
-    E2["2 · <b>DELETE every X-Auth-* header the client sent</b>"]
-    E3["3 · inject verified identity + an edge assertion"]
-    E1 --> E2 --> E3
-  end
-
-  E3 --> A["src/main.py<br/>our three endpoints"]
-  A -->|"require_role('headcount-viewer')"| A2{"in the group?"}
-  A2 -->|no| D(["403 — names the ADR"])
-  A2 -->|yes| Q["query('hr.headcount', sql)"]
-
-  Q --> BR["the SDK broker"]
-  BR --> C1{"declared in our app.yaml?"}
-  C1 -->|no| D2(["EntitlementError"])
-  C1 -->|yes| C2["resolve the name to a table<br/><i>different per environment</i>"]
-  C2 --> C3["execute with a short-lived credential<br/><i>we never see it</i>"]
-  C3 --> C4["audit: who · app · dataset · rows"]
-  C4 --> R(["rows → JSON → the browser"])
-```
-
-**Three things in that diagram are the whole design:**
-
-- **Step 2.** If the edge did not strip client headers, `curl -H "X-Auth-Groups: comp-analyst"`
-  would be a complete bypass and our app could not tell. Try it — you stay Krishna.
-- **No token in the browser.** The frontend is served from the same origin as the API, so the
-  session cookie is attached automatically. There is no access token in `localStorage` for an
-  XSS bug to steal, because there is no access token at all.
-- **`hr.headcount` is a name, not a table.** We never learn the physical table, which is why
-  this same code runs in dev, uat and prod unchanged.
-
----
-
-## Our contract — [`app.yaml`](app.yaml)
-
-The two `access` blocks answer different questions, and keeping them apart is the point:
-
-```yaml
-access:
-  manage:                                  # who may DEPLOY and GOVERN this app
-    owners:       [MG-PEOPLE-OPS]          #   approve prod · request data · answer for it
-    contributors: [MG-PEOPLE-OPS-ENG]      #   deploy dev/uat · read logs · NOT prod
-    readers:      [MG-FINANCE-BI]          #   see status and telemetry only
-  roles:                                   # who may USE the running app
-    - name: headcount-viewer
-      groups: [MG-PEOPLE-OPS, MG-FINANCE-BI]
-
-data:                                      # what we may read. Names, never tables
-  - {dataset: hr.headcount,     access: read}
-  - {dataset: directory.people, access: read}   # a different connection — same declaration
-```
-
-An engineer who can ship to uat is not thereby allowed to read what the app reads. A person who
-can view the dashboard cannot deploy it.
-
-**What we cannot write here:** `classification`, `connection`, `engine`, `credential`, `dsn`,
-`table`, `host`. The manifest loader rejects all of them at any depth. We declare *intent*; the
-platform decides *mechanism*.
-
----
-
-## Deploying
-
-Four generated workflows, four lines each:
-
-| Workflow | When | Approved by |
-|---|---|---|
-| `ci.yml` | every PR | nobody — it deploys nothing |
-| `deploy-dev.yml` | merge to main | nobody. That is what dev is for |
-| `deploy-uat.yml` | we click Run | our **contributors** |
-| `deploy-prod.yml` | we click Run | our **owners** |
-
-The image is built **once, in dev**. uat and prod promote that exact image — they never rebuild,
-because a rebuild in prod means prod is running something nobody tested. And we cannot give
-ourselves a production deploy: the approver lists come from `access.manage`, not from our
-workflow files.
-
----
-
-## Local vs production — the same app, two very different worlds
-
-Everything on the left is a fake. **Nothing in `src/` changes between them.**
-
-```mermaid
-flowchart LR
-  subgraph L["LOCAL — what runs on your laptop"]
-    direction TB
-    L1["?as=krishna@corp.example<br/><i>a cookie. That is the whole login</i>"]
-    L2["platform edge<br/><i>strips + injects headers</i>"]
-    L3["this app<br/><i>uvicorn</i>"]
-    L4["SDK broker"]
-    L5[("SQLite file<br/><i>seeded by a script</i>")]
-    L6[("JSONL files<br/><i>logs + audit</i>")]
-    L1 --> L2 --> L3 --> L4
-    L4 --> L5
-    L4 --> L6
-  end
-
-  subgraph P["PRODUCTION — AWS + Databricks, two layers"]
-    direction TB
-    P1["Entra ID<br/><i>corporate SSO · MFA</i>"]
-    P2["ALB · OIDC action<br/><i>signs a JWT the app verifies</i>"]
-    P3["this app<br/><i>ECS Fargate · its own IAM task role</i>"]
-    P4["SDK broker"]
-    P5[("Databricks SQL Warehouse<br/><b>Unity Catalog</b> owns grants,<br/>column masks, row filters")]
-    P6[("CloudWatch + UC system tables")]
-    P1 --> P2 --> P3 --> P4
-    P4 --> P5
-    P4 --> P6
-  end
-
-  L -.->|"same app code<br/>only endpoints differ"| P
-```
-
-### What changes, precisely
-
-| Concern | Local | Production | Changes in `src/` |
-|---|---|---|---|
-| **SSO** | `?as=` sets a cookie | Entra ID via the ALB's OIDC action | nothing |
-| **U2M** — a person reading data | the app reads for you | **token exchange**: your session becomes a short-lived Databricks token, so Unity Catalog sees *you* and applies *your* masks | nothing |
-| **M2M** — a job reading data | the app's own identity | **workload identity federation** from the ECS task role. No client secret exists | nothing |
-| **Shared connections** | SQLite + a stdlib REST stub | Databricks SQL Warehouse + the real service over PrivateLink | nothing |
-| **Access to data** | our `app.yaml` + `grants.yaml` | our `app.yaml` + **a Unity Catalog grant**, enforced by the data platform on every path including notebooks | nothing |
-| **Who holds the password** | an env var the CLI injects | **nobody — there is no stored credential** | nothing |
-| **Audit** | a JSONL file | UC `system.access.audit` is authoritative; our record correlates it to the app and HTTP request | nothing |
-
-### U2M and M2M, side by side
-
-The distinction that matters most, because it decides what Unity Catalog sees:
+## How a request works
 
 ```mermaid
 flowchart TB
-  subgraph U["U2M — a person is present (this app)"]
-    UA["Krishna signs in to Entra"] --> UB["their session"]
-    UB --> UC1["OAuth token exchange<br/><i>Databricks federates to the same Entra</i>"]
-    UC1 --> UD["a short-lived token <b>for Krishna</b>"]
-    UD --> UE["Unity Catalog sees krishna@corp.example<br/><b>applies THEIR grants and column masks</b>"]
-  end
-
-  subgraph M["M2M — nobody is present (the comp-report job)"]
-    MA["ECS task role"] --> MB["workload identity federation<br/><i>OIDC. No client secret anywhere</i>"]
-    MB --> MC["a short-lived token for <b>sp-comp-report</b>"]
-    MC --> MD["Unity Catalog sees the service principal<br/><b>applies ITS grants</b>"]
-  end
+  U["krishna opens the dashboard"] --> E1["the edge: is there a session?"]
+  E1 -->|no| L(["401 — sign in"])
+  E1 -->|yes| E2{"<b>LAYER 1</b><br/>in a group that may use this app?"}
+  E2 -->|no| F(["403 — before any of our code runs"])
+  E2 -->|yes| E3["STRIP every X-Auth-* the client sent<br/>INJECT validated ones + an edge token"]
+  E3 --> A["our handler"]
+  A --> R{"<b>LAYER 2</b><br/>require_role('reader')"}
+  R -->|no| F2(["403"])
+  R -->|yes| C["connect('hr-warehouse')"]
+  C --> C1["resolve the secret as this app's identity"]
+  C1 --> C2["open the connection, run our SQL"]
+  C2 --> C3["record connection, engine, ms, rows<br/><i>never the SQL, never a row</i>"]
+  C3 --> OUT(["JSON"])
 ```
 
-**Why this matters for the platform team's own access:** neither path leaves a credential
-anywhere. There is nothing in a secret store for a platform engineer to read, and no standing
-identity to impersonate. To see tenant rows they need a Unity Catalog grant from the data owner,
-recorded in UC's audit, which the platform team cannot edit.
+---
+
+## Two engines, one call shape
+
+```yaml
+connections:
+  - name: hr-warehouse
+    engine: sqlite               # databricks-sql in dev and prod
+    path: ...
+
+  - name: people-directory
+    engine: rest
+    base_url: ${INSIGHTS_DIRECTORY_URL}
+    secret: directory-api-token
+    timeout: 10
+```
+
+```python
+rows   = connect("hr-warehouse").query("SELECT dept, headcount FROM hr_headcount ...")
+people = connect("people-directory").query("/people", dept=dept)
+```
+
+A warehouse and an internal REST API. One needs a bearer token; the other needs none.
+Neither difference appears in our code — for a REST connection `query()` takes a path
+instead of SQL, and the connector attaches the credential.
+
+**We already have access to both.** The platform is not in that loop: it ships the
+connector, holds the credential where we can reach it and the platform team cannot, and
+translates the driver's error into something that says who has to fix it.
+
+---
+
+## Local vs production
+
+| Concern | Local | Production | Changes in `src/` |
+|---|---|---|---|
+| Sign-in | `?as=` stub | ALB native OIDC | nothing |
+| Identity to our code | `X-Auth-*` from the local edge | `X-Auth-*` from the gateway | nothing |
+| The warehouse | sqlite | Databricks SQL | nothing — swap `engine:` and `host:` |
+| The directory | a local REST stub | the real internal API | nothing |
+| Credentials | files in the fake store | Secrets Manager, scoped to `sp-headcount-dashboard` | nothing |
+| Column masks, row filters | — | **Unity Catalog**, per principal, on every path | nothing |
+| Telemetry | JSONL on disk | stdout → CloudWatch | nothing |
+
+**User identity reaches the data in production.** An interactive request uses OAuth token
+exchange, so Unity Catalog sees `krishna@corp.example` and applies *their* grants and
+masks — not the app's. A scheduled run uses workload identity federation and UC sees the
+service principal. Either way the decision is made by the data platform, against a real
+principal, on every path including a notebook.
+
+**What the platform team can see:** that this app queried `hr-warehouse`, how long it took
+and how many rows came back. Not the SQL, not a row. There is no identity here for them to
+impersonate, and no credential of ours they can read.
 
 ---
 
