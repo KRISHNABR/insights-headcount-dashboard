@@ -217,7 +217,7 @@ flowchart TB
 
   subgraph M["M2M — nobody is present (the comp-report job)"]
     MA["ECS task role"] --> MB["workload identity federation<br/><i>OIDC. No client secret anywhere</i>"]
-    MB --> MC["a short-lived token for <b>svc:comp-report</b>"]
+    MB --> MC["a short-lived token for <b>sp-comp-report</b>"]
     MC --> MD["Unity Catalog sees the service principal<br/><b>applies ITS grants</b>"]
   end
 ```
