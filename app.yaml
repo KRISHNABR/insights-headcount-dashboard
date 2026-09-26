@@ -1,20 +1,114 @@
-# The tenant's entire declaration to the platform.
+# =============================================================================
+# app.yaml - everything the platform needs to know about this app.
+#
+# You declare WHAT you need. The platform decides HOW: which image, which
+# credential, which table, which cron, which IAM role, which corporate group.
+# That is why there is no connection string, no Dockerfile and no pipeline in
+# this repository - and why the loader rejects one if you add it.
+#
+# Every line below turns into something real at deploy time. The mapping is in
+# docs/ARCHITECTURE.md, "What each line of app.yaml becomes".
+# =============================================================================
+
 apiVersion: v1
 app: headcount-dashboard
 team: people-ops
-kind: web                       # web | job
+kind: web                        # web | job
 
-owners:
-  - MG-PEOPLE-OPS               # corporate group; becomes <app>-admin
-
-runtime:
-  sdk: ">=0.1,<1"               # a FLOOR, not a pin - patches/minors flow automatically
-
-data:
-  - dataset: hr.headcount       # catalog alias. NOT a connection string.
-    access: read
-  - dataset: directory.people   # a different shared connection (the internal REST API),
-    access: read                # declared the same way. The tenant never learns which.
-
+# -----------------------------------------------------------------------------
+# ACCESS - two different questions, deliberately kept apart.
+#
+#   manage:  who can change, deploy and govern THIS APP        (control plane)
+#   roles:   who can use the RUNNING APP and see what          (data plane)
+#
+# Mixing these is the most common way internal platforms leak. Being able to
+# deploy an app is not the same as being allowed to read what it reads.
+# -----------------------------------------------------------------------------
 access:
-  roles: [headcount-viewer]     # who may use the app, beyond platform membership
+
+  manage:
+    # Full control. Approves production deploys, requests data access, adds
+    # people, deletes the app. Must be a corporate group, never an individual -
+    # individuals leave.
+    owners:
+      - MG-PEOPLE-OPS
+
+    # Day-to-day engineering. Can deploy to dev and uat, read logs and
+    # telemetry, open PRs. CANNOT deploy to prod and CANNOT request data access.
+    contributors:
+      - MG-PEOPLE-OPS-ENG
+
+    # Can see that the app exists, its health and its telemetry. No deploys,
+    # no data. Usually a neighbouring team or an internal auditor.
+    readers:
+      - MG-FINANCE-BI
+
+  # Roles the app itself checks at runtime with require_role("headcount-viewer").
+  # The platform reconciles each role to a corporate group at deploy time, so
+  # nobody hand-creates groups and nobody hand-checks membership.
+  roles:
+    - name: headcount-viewer
+      description: View headcount by department.
+      groups:
+        - MG-PEOPLE-OPS
+        - MG-FINANCE-BI
+
+# -----------------------------------------------------------------------------
+# RUNTIME - what this runs on. You pick from what the platform publishes;
+# you do not build an image.
+# -----------------------------------------------------------------------------
+runtime:
+  sdk: ">=0.1,<1"                # a FLOOR, not a pin. Patches and minors reach
+                                 # you automatically. `==` is rejected.
+  base: python-web               # see `insights runtimes`. The platform patches these.
+  size: small                    # small | medium | large -> cpu/memory/replicas
+
+# -----------------------------------------------------------------------------
+# DATA - logical dataset names. Never a table, never a connection, never a
+# credential. Run `insights datasets` to see what you can ask for.
+# -----------------------------------------------------------------------------
+data:
+  - dataset: hr.headcount
+    access: read
+  - dataset: directory.people    # a different shared connection (the internal
+    access: read                 # REST API). Declared identically - you are not
+                                 # told, and do not need to know, which is which.
+
+# -----------------------------------------------------------------------------
+# WEB - only for kind: web.
+# -----------------------------------------------------------------------------
+web:
+  route: /headcount-dashboard    # where the edge publishes you
+
+  type: spa                      # dashboard | api | spa | streamlit
+                                 #
+                                 #   api        FastAPI, JSON only. No UI.
+                                 #   spa        FastAPI backend + YOUR frontend in static/.
+                                 #              We serve it from the same origin; we do not
+                                 #              build it. No Node in the runtime image.
+                                 #   streamlit  You write one app.py. The platform supplies
+                                 #              the identity shim, a health sidecar and
+                                 #              sticky sessions.
+                                 #
+                                 # `type` picks the base image, how identity reaches your
+                                 # code and the health contract. It does NOT change how you
+                                 # reach data - query() is identical in all of them.
+
+  health: /healthz               # generated. Resolves every dataset above and
+                                 # checks its credential was injected.
+
+# -----------------------------------------------------------------------------
+# ENVIRONMENTS - which environments exist and who lets a release into them.
+# The approver lists point at the groups in access.manage above, so promotion
+# rights and app ownership cannot drift apart.
+# -----------------------------------------------------------------------------
+environments:
+  dev:
+    auto_deploy: true            # every merge to main
+  uat:
+    auto_deploy: false
+    approvers: contributors
+  prod:
+    auto_deploy: false
+    approvers: owners            # only MG-PEOPLE-OPS can release to production
+    change_window: business-hours

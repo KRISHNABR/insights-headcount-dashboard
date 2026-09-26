@@ -1,0 +1,76 @@
+<!doctype html>
+<!--
+  The frontend. Plain HTML and one <script> — no build step, no bundler, no npm.
+
+  The only thing worth noticing: there is NO authentication code here, and no token
+  anywhere. fetch() is same-origin, so the session cookie the front door set rides
+  along automatically. A token that does not exist cannot be stolen by an XSS bug.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Headcount</title>
+  <style>
+    body{font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         margin:0;color:#16202c}
+    header{display:flex;gap:12px;align-items:center;padding:12px 22px;border-bottom:1px solid #dfe6ee}
+    .brand{font-weight:700}.spacer{flex:1}.who{font-size:13px;color:#5a6b7d}
+    main{max-width:760px;margin:28px auto;padding:0 22px}
+    h1{font-size:22px;margin:0 0 4px}
+    .lede{color:#5a6b7d;margin:0 0 20px}
+    .row{display:flex;align-items:center;gap:10px;margin:6px 0}
+    .label{width:150px;text-align:right;color:#5a6b7d;flex:none}
+    .bar{background:#2b6cb0;height:16px;border-radius:3px;min-width:2px}
+    .val{font-variant-numeric:tabular-nums}
+    .err{background:#fff4f4;border:1px solid #f3c9c9;padding:10px 14px;border-radius:6px;color:#8a1f1f}
+    select{padding:5px 8px}
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Insights Hub</span><span>headcount-dashboard</span>
+    <span class="spacer"></span><span class="who" id="who">…</span>
+  </header>
+  <main>
+    <h1>Headcount by department</h1>
+    <p class="lede">
+      Month <select id="month"><option>2026-09</option><option>2026-08</option></select>
+    </p>
+    <div id="out"></div>
+  </main>
+
+<script>
+// No Authorization header, no token read from storage. Same-origin cookie only.
+const get = async (url) => {
+  const r = await fetch(url, { credentials: "same-origin" });
+  if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+  return r.json();
+};
+
+const draw = (rows) => {
+  const top = Math.max(...rows.map(r => r.headcount), 1);
+  document.getElementById("out").innerHTML = rows.map(r => `
+    <div class="row">
+      <span class="label">${r.dept}</span>
+      <span class="bar" style="width:${(100 * r.headcount / top).toFixed(1)}%"></span>
+      <span class="val">${r.headcount}</span>
+    </div>`).join("");
+};
+
+const load = async () => {
+  try {
+    const month = document.getElementById("month").value;
+    draw((await get(`/api/headcount?month=${month}`)).departments);
+  } catch (e) {
+    // A platform refusal comes back as a readable 403, not a stack trace.
+    document.getElementById("out").innerHTML = `<div class="err">${e.message}</div>`;
+  }
+};
+
+get("/api/me").then(m => document.getElementById("who").textContent = m.subject);
+document.getElementById("month").onchange = load;
+load();
+</script>
+</body>
+</html>
