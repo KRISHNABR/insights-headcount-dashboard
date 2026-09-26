@@ -1,6 +1,6 @@
 # headcount-dashboard
 
-An interactive web app on [Insights Hub](../insights-platform/README.md). Owned by **people-ops**.
+An interactive web app on [Insights Hub](https://github.com/KRISHNABR/insights-platform/blob/main/README.md). Owned by **people-ops**.
 
 Shows headcount by department, and looks people up in the internal directory.
 
@@ -15,4 +15,4 @@ maintain. When the platform changes them, we get the change by upgrading the SDK
 
 ---
 
-*New to the platform? Start at the [platform README](../insights-platform/README.md), which maps everything, then [ONBOARDING.md](../insights-platform/ONBOARDING.md).*
+*New to the platform? Start at the [platform README](https://github.com/KRISHNABR/insights-platform/blob/main/README.md), which maps everything, then [ONBOARDING.md](https://github.com/KRISHNABR/insights-platform/blob/main/ONBOARDING.md).*
